@@ -45,6 +45,6 @@ if [ -n "$errors" ]; then
     fi
     exit 1
 else
-    echo -e "${GREEN}😄🎉 Commit message validation passed. 😘${NC}"
+    echo -e "${GREEN}😄 🎉 Commit message validation passed. 😘 ${NC}"
     exit 0
 fi
