@@ -1,0 +1,39 @@
+#!/bin/bash
+# ANSI color codes
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+COMMIT_MSG_FILE=$1
+COMMIT_SOURCE=$2
+
+# only auto-fill when no source (normal commit, not merge/squash/amend)
+if [ -n "$COMMIT_SOURCE" ]; then
+    exit 0
+fi
+
+# get current branch name
+current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+# extract JIRA ticket from branch name
+jira_ticket=$(echo "$current_branch" | grep -oE '[A-Z]+-[0-9]+')
+
+# only pre-fill if a JIRA ticket was found in the branch name
+if [ -z "$jira_ticket" ]; then
+    exit 0
+fi
+
+# check if message already has a JIRA ticket (e.g. amend or template)
+existing_msg=$(head -n 1 "$COMMIT_MSG_FILE")
+if echo "$existing_msg" | grep -qE '[A-Z]+-[0-9]+'; then
+    exit 0
+fi
+
+# pre-fill the commit message file with the ticket
+echo "feat: ${jira_ticket} " > "$COMMIT_MSG_FILE"
+echo "" >> "$COMMIT_MSG_FILE"
+echo "# Branch: ${current_branch}" >> "$COMMIT_MSG_FILE"
+echo "# Format: <type>(<scope>): <JIRA-TICKET> <summary>" >> "$COMMIT_MSG_FILE"
+echo "# Types: feat, fix, docs, style, refactor, perf, test, chore, revert" >> "$COMMIT_MSG_FILE"
+
+echo -e "${YELLOW}INFO:${NC} Pre-filled commit message with ticket ${CYAN}${jira_ticket}${NC}. Please complete the message."

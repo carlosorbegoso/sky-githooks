@@ -1,0 +1,50 @@
+#!/bin/bash
+# ANSI color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# read the first line of the commit message
+commit_msg_file=$1
+commit_msg=$(head -n 1 "$commit_msg_file")
+
+# Get the current branch name
+current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+# extract potential JIRA ticket from branch name
+jira_ticket=$(echo "$current_branch" | grep -oE '[A-Z]+-[0-9]+')
+
+# initialize error accumulator
+errors=""
+
+# Function to validate commit message against a pattern
+validate_commit_message() {
+    local pattern="$1"
+    local error_msg="$2"
+    if ! echo "$commit_msg" | grep -E "$pattern" > /dev/null; then
+        errors+="\n- ${error_msg}"
+    fi
+}
+# Validate commit message format
+if [ ${#commit_msg} -gt 72 ]; then
+    errors+="\n- Commit message should be 72 characters or less."
+fi
+validate_commit_message "^(feat|fix|docs|style|refactor|perf|test|chore|revert)(\(.*\))?: [A-Z]+-[0-9]+ .+" "Commit message should start with a valid type, include a JIRA ticket, and have a description (e.g., '<type>(<scope>): <JIRA-TICKET>: <summary>. The scope is optional')."
+# check for empty scope parentheses
+if [[ "$commit_msg" =~ \(\) ]]; then
+    errors+="\n- Scope should not be empty if parentheses are used."
+fi
+# display error or success message
+if [ -n "$errors" ]; then
+    echo -e "${RED}😢 Commit message validation failed:${NC}${errors}"
+    # if the message is missing a JIRA ticket and we detected one from the branch, suggest it
+    if ! echo "$commit_msg" | grep -qE '[A-Z]+-[0-9]+' && [ -n "$jira_ticket" ]; then
+        echo -e "${YELLOW}HINT:${NC} Your branch suggests the ticket ${CYAN}${jira_ticket}${NC}. Try: ${CYAN}<type>: ${jira_ticket} <summary>${NC}"
+    fi
+    exit 1
+else
+    echo -e "${GREEN}😄🎉 Commit message validation passed. 😘${NC}"
+    exit 0
+fi

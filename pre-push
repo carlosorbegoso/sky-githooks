@@ -1,0 +1,90 @@
+#!/bin/bash
+# ANSI color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# protected branches
+PROTECTED_BRANCHES=("main" "master" "develop" "release")
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# check for unresolved merge conflicts in committed files about to be pushed
+CONFLICT_FILES=$(git grep -lE '^(<<<<<<<|=======|>>>>>>>)' HEAD 2>/dev/null)
+if [ -n "$CONFLICT_FILES" ]; then
+    echo -e "${RED}😢 ERROR:${NC} Unresolved merge conflicts found in:"
+    echo "$CONFLICT_FILES" | while IFS= read -r f; do
+        echo -e "  ${CYAN}$f${NC}"
+    done
+    exit 1
+fi
+
+# block direct push to protected branches
+if [[ " ${PROTECTED_BRANCHES[@]} " =~ " ${CURRENT_BRANCH} " ]]; then
+    echo -e "${RED}😢 ERROR: Direct pushes to the ${CURRENT_BRANCH} branch are not allowed. Please create a pull request instead.${NC}"
+    exit 1
+fi
+# only apply squash on feature/* branches
+if [[ "$CURRENT_BRANCH" == feature/* ]]; then
+    echo -e "${YELLOW} INFO${CYAN} Squash commits on feature branches is recommended. Please consider squashing your commits before pushing.${NC}"
+
+    # check for upstream
+    if ! git rev-parse --abbrev-ref @{u} > /dev/null 2>&1; then
+        echo -e "${YELLOW}WARNING${CYAN}: No upstream branch set for ${CURRENT_BRANCH}. Consider setting an upstream branch before pushing.${NC}"
+        exit 1
+    fi
+
+    UPSTREAM=$(git rev-parse --abbrev-ref @{u})
+
+    BASE=$(git merge-base HEAD "$UPSTREAM")
+
+    if [ -z "$BASE" ]; then
+        echo -e "${RED}😢 ERROR:${NC} Could not determine merge base for ${CURRENT_BRANCH}."
+        exit 1
+    fi
+
+    COMMITS=$(git rev-list --count "$BASE"..HEAD)
+
+    if [ "$COMMITS" -gt 1 ]; then
+        echo -e "${YELLOW}WARNING${CYAN}: You have $COMMITS commits on ${CURRENT_BRANCH}. Consider squashing them into a single commit before pushing.${NC}"
+
+        LAST_MSG=$(git log -1 --pretty=%B)
+
+        echo -e "${CYAN}Last commit message:${NC} ${LAST_MSG}"
+        read -e -i "$LAST_MSG" -p "Enter commit message for squashed commit (press Enter to keep the last message): " NEW_MSG
+        COMMIT_MSG=${NEW_MSG:-$LAST_MSG}
+
+        # validate the squash commit message against the same rules as commit-msg hook
+        FIRST_LINE=$(echo "$COMMIT_MSG" | head -n 1)
+        if [ ${#FIRST_LINE} -gt 72 ]; then
+            echo -e "${RED}😢 ERROR:${NC} Commit message must be 72 characters or less."
+            exit 1
+        fi
+        if ! echo "$FIRST_LINE" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|chore|revert)(\(.*\))?: [A-Z]+-[0-9]+ .+"; then
+            echo -e "${RED}😢 ERROR:${NC} Commit message must follow the format: <type>(<scope>): <JIRA-TICKET> <summary>"
+            exit 1
+        fi
+        if [[ "$FIRST_LINE" =~ \(\) ]]; then
+            echo -e "${RED}😢 ERROR:${NC} Scope should not be empty if parentheses are used."
+            exit 1
+        fi
+
+        git reset --soft "$BASE" || { echo -e "${RED}😢 ERROR:${NC} Failed to reset commits for squash."; exit 1; }
+        git commit -m "$COMMIT_MSG" || { echo -e "${RED}😢 ERROR:${NC} Failed to create squashed commit."; exit 1; }
+    fi
+fi
+
+# show summary of commits about to be pushed
+if git rev-parse --abbrev-ref @{u} > /dev/null 2>&1; then
+    PUSH_BASE=$(git rev-parse @{u})
+    PUSH_COMMITS=$(git rev-list --count "$PUSH_BASE"..HEAD)
+    if [ "$PUSH_COMMITS" -gt 0 ]; then
+        echo -e "${CYAN}Summary:${NC} $PUSH_COMMITS commit(s) will be pushed to ${CYAN}$(git rev-parse --abbrev-ref @{u})${NC}:"
+        git log "$PUSH_BASE"..HEAD --oneline | while IFS= read -r line; do
+            echo -e "  ${GREEN}→${NC} $line"
+        done
+    fi
+fi
+
+exit 0

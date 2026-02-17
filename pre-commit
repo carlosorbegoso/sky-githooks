@@ -1,0 +1,91 @@
+#!/bin/bash
+
+TOOL_DIR="$HOME/.java_tools"
+CHECKSTYLE_VERSION="6.18"
+CHECKSTYLE_JAR="checkstyle-${CHECKSTYLE_VERSION}-all.jar"
+CHECKSTYLE_PATH="$TOOL_DIR/$CHECKSTYLE_JAR"
+CHECKSTYLE_URL="https://github.com/checkstyle/checkstyle/releases/download/checkstyle-${CHECKSTYLE_VERSION}/${CHECKSTYLE_JAR}"
+
+GJF_VERSION="1.17.0"
+GJF_JAR="google-java-format-${GJF_VERSION}-all-deps.jar"
+GJF_PATH="$TOOL_DIR/$GJF_JAR"
+GJF_URL="https://github.com/google/google-java-format/releases/download/v${GJF_VERSION}/${GJF_JAR}"
+
+CONFIG="checkstyle.xml"
+
+handle_error() {
+    echo "Error: $1"
+    exit 1
+}
+command -v java >/dev/null 2>&1 || handle_error "Java is not installed. Please install Java to use this pre-commit hook."
+command -v git >/dev/null 2>&1 || handle_error "Git is not installed. Please install Git to use this pre-commit hook."
+command -v curl >/dev/null 2>&1 || handle_error "curl is not available. Please ensure curl is installed and accessible in your PATH."
+
+# create tool directory if it doesn't exist
+mkdir -p "$TOOL_DIR"
+
+download_tool() {
+    local url="$1"
+    local path="$2"
+    local name="$3"
+
+    if [ -z "$url" ]; then
+        handle_error "$name download URL is not configured. Please set the URL in the pre-commit hook."
+    fi
+    if [ ! -f "$path" ]; then
+        echo "Downloading $name..."
+        curl -fsSL "$url" -o "$path" || handle_error "Failed to download $name from $url"
+    fi
+}
+download_tool "$CHECKSTYLE_URL" "$CHECKSTYLE_PATH" "Checkstyle"
+download_tool "$GJF_URL" "$GJF_PATH" "Google Java Format"
+
+# java files staged for commit
+FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.java$' | while read f; do [ -f "$f" ] && echo "$f"; done)
+if [ -z "$FILES" ]; then
+    echo "No Java files staged for commit."
+    exit 0
+fi
+
+# 1. warn about System.out.println, TODO and FIXME in staged files
+warnings_found=0
+while IFS= read -r file; do
+    while IFS= read -r match; do
+        echo -e "\033[0;33mWARNING\033[0m: Found '${match}' in ${file}"
+        warnings_found=1
+    done < <(git diff --cached "$file" | grep -E '^\+.*(System\.out\.println|TODO|FIXME)' | grep -oE 'System\.out\.println|TODO|FIXME' | sort -u)
+done <<< "$FILES"
+if [ "$warnings_found" -eq 1 ]; then
+    echo -e "\033[0;33mWARNING\033[0m: Please review the above before committing."
+fi
+
+# 2. format first with Google Java Format
+echo "Running Google Java Format..."
+
+gjf_output=$(echo "$FILES" | tr '\n' '\0' | xargs -0 java -jar "$GJF_PATH" --replace 2>&1)
+gjf_exit=$?
+if [ "$gjf_exit" -ne 0 ]; then
+    echo "$gjf_output"
+    handle_error "😢 Google Java Format failed. Please fix the issues and try committing again."
+fi
+
+# 3. re-stage any files modified by the formatter
+while IFS= read -r file; do
+    if ! git diff --quiet "$file"; then
+        echo "Re-staging formatted file: $file"
+        git add "$file"
+    fi
+done <<< "$FILES"
+
+# 4. run Checkstyle on the already-formatted code
+echo "Running Checkstyle..."
+checkstyle_output=$(echo "$FILES" | tr '\n' '\0' | xargs -0 java -jar "$CHECKSTYLE_PATH" -c "$CONFIG" 2>&1)
+checkstyle_exit=$?
+if [ "$checkstyle_exit" -ne 0 ] || echo "$checkstyle_output" | grep -q "Severity: error"; then
+    echo "$checkstyle_output"
+    echo "😢 Checkstyle validation failed. Please fix the issues and try committing again."
+    exit 1
+fi
+
+echo "All files passed formatting and style validation."
+exit 0
