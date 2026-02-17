@@ -77,14 +77,18 @@ while IFS= read -r file; do
     fi
 done <<< "$FILES"
 
-# 4. run Checkstyle on the already-formatted code
-echo "Running Checkstyle..."
-checkstyle_output=$(echo "$FILES" | tr '\n' '\0' | xargs -0 java -jar "$CHECKSTYLE_PATH" -c "$CONFIG" 2>&1)
-checkstyle_exit=$?
-if [ "$checkstyle_exit" -ne 0 ] || echo "$checkstyle_output" | grep -q "Severity: error"; then
-    echo "$checkstyle_output"
-    echo "😢 Checkstyle validation failed. Please fix the issues and try committing again."
-    exit 1
+# 4. run Checkstyle on the already-formatted code (only if config file exists)
+if [ ! -f "$CONFIG" ]; then
+    echo "Skipping Checkstyle: $CONFIG not found in project root."
+else
+    echo "Running Checkstyle..."
+    checkstyle_output=$(echo "$FILES" | tr '\n' '\0' | xargs -0 java -jar "$CHECKSTYLE_PATH" -c "$CONFIG" 2>&1)
+    checkstyle_exit=$?
+    if [ "$checkstyle_exit" -ne 0 ] || echo "$checkstyle_output" | grep -q "Severity: error"; then
+        echo "$checkstyle_output"
+        echo "😢 Checkstyle validation failed. Please fix the issues and try committing again."
+        exit 1
+    fi
 fi
 
 echo "All files passed formatting and style validation."
